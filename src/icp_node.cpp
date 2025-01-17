@@ -6,6 +6,7 @@
 #include <pcl/filters/passthrough.h>
 #include <pcl/common/transforms.h>
 #include <pcl/registration/icp.h>
+#include <pcl/filters/voxel_grid.h>
 
 #include <iostream>
 #include <vector>
@@ -26,7 +27,7 @@ public:
     map_subscriber = this->create_subscription<subscribe_type>("init_map", 10, std::bind(&ICPNode::map_callback, this, _1));
     sensor_subscriber = this->create_subscription<subscribe_type>("target_pointcloud", 10, std::bind(&ICPNode::sensor_callback, this, _1));
 
-    timer_ = this->create_wall_timer(std::chrono::milliseconds(1000), std::bind(&ICPNode::timer_callback, this));
+    timer_ = this->create_wall_timer(std::chrono::milliseconds(10000), std::bind(&ICPNode::timer_callback, this));
   }
 
 private:
@@ -101,14 +102,14 @@ private:
       pcl::transformPointCloud(sensor_xyz, sensor_, tmat);
       sensor_xyz = sensor_;
 
-      if (icp.getFitnessScore() < 0.1)
+      if (icp.getFitnessScore() < 0.2)
       {
         break;
       }
     }
     pcl::PointCloud<pcl::PointXYZRGB> converted_sensor;
     pcl::transformPointCloud(sensor, converted_sensor, tmat);
-    map += converted_sensor;
+    // map += converted_sensor;
   }
 
   void timer_callback()
@@ -118,8 +119,14 @@ private:
       return;
     }
 
+    pcl::PointCloud<pcl::PointXYZRGB> map_down;
+    pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+    sor.setInputCloud(map.makeShared());
+    sor.setLeafSize(0.05, 0.05, 0.05);
+    sor.filter(map_down);
+
     publisher_type msg;
-    pcl::toROSMsg(map, msg);
+    pcl::toROSMsg(map_down, msg);
 
     msg.header.set__frame_id("nemui");
     map_publisher->publish(msg);
