@@ -21,6 +21,11 @@ public:
   ICPNode()
       : Node("icp_node")
   {
+    this->declare_parameter("max_iteration", 10);
+    this->declare_parameter("max_correspondence_distance", std::sqrt(std::numeric_limits<double>::max()));
+    this->declare_parameter("transform_epsilon", 0.0);
+    this->declare_parameter("euclidean_fitness_epsilon", 0.0);
+
     result_publisher = this->create_publisher<publisher_type>("icp/result", 10);
     map_publisher = this->create_publisher<publisher_type>("icp/map", 10);
 
@@ -70,43 +75,41 @@ private:
     RCLCPP_INFO_STREAM(get_logger(), "icp");
     pcl::PointCloud<ICP_Type> result;
     pcl::IterativeClosestPoint<ICP_Type, ICP_Type> icp;
-    // icp.setMaximumIterations(1000);        // 1回の呼び出しでの最大反復回数
-    // icp.setMaxCorrespondenceDistance(0.1); // 対応点の最大距離
-    // icp.setTransformationEpsilon(1e-8);    // 収束条件：変換行列の変化量
-    // icp.setEuclideanFitnessEpsilon(1e-5);  // 収束条件：対応点間の平均二乗誤差
+
+    auto max_iteration = this->get_parameter("max_iteration").as_int();
+    auto max_correspondence_distance = this->get_parameter("max_correspondence_distance").as_double();
+    auto transform_epsilon = this->get_parameter("transform_epsilon").as_double();
+    auto euclidean_fitness_epsilon = this->get_parameter("euclidean_fitness_epsilon").as_double();
+
+    icp.setMaximumIterations(max_iteration);                       // 1回の呼び出しでの最大反復回数
+    icp.setMaxCorrespondenceDistance(max_correspondence_distance); // 対応点の最大距離
+    icp.setTransformationEpsilon(transform_epsilon);               // 収束条件：変換行列の変化量
+    icp.setEuclideanFitnessEpsilon(euclidean_fitness_epsilon);     // 収束条件：対応点間の平均二乗誤差
+
+    icp.setInputTarget(map_xyz.makeShared());
+    icp.setInputSource(sensor_xyz.makeShared());
+    icp.align(result);
+
+    if (not icp.hasConverged())
+    {
+      RCLCPP_WARN(get_logger(), "ICP has not converged");
+      return;
+    }
+    RCLCPP_INFO_STREAM(get_logger(), "ICP has converged, score is " << icp.getFitnessScore());
 
     Eigen::Matrix4d tmat = Eigen::Matrix4d::Identity();
-    while (rclcpp::ok())
-    {
-      icp.setInputTarget(map_xyz.makeShared());
-      icp.setInputSource(sensor_xyz.makeShared());
-      icp.align(result);
 
-      RCLCPP_INFO_STREAM(get_logger(), "publish icp's result");
-      publisher_type result_msg;
-      pcl::toROSMsg(result, result_msg);
-      result_msg.header.set__frame_id("nemui");
-      result_publisher->publish(result_msg);
+    RCLCPP_INFO_STREAM(get_logger(), "publish icp's result");
+    publisher_type result_msg;
+    pcl::toROSMsg(result, result_msg);
+    result_msg.header.set__frame_id("nemui");
+    result_publisher->publish(result_msg);
 
-      if (not icp.hasConverged())
-      {
-        RCLCPP_WARN(get_logger(), "ICP has not converged");
-        return;
-      }
+    tmat = icp.getFinalTransformation().cast<double>();
+    pcl::PointCloud<ICP_Type> sensor_;
+    pcl::transformPointCloud(sensor_xyz, sensor_, tmat);
+    sensor_xyz = sensor_;
 
-      RCLCPP_INFO_STREAM(get_logger(), "ICP has converged, score is " << icp.getFitnessScore());
-
-      tmat = icp.getFinalTransformation().cast<double>();
-
-      pcl::PointCloud<ICP_Type> sensor_;
-      pcl::transformPointCloud(sensor_xyz, sensor_, tmat);
-      sensor_xyz = sensor_;
-
-      if (icp.getFitnessScore() < 0.2)
-      {
-        break;
-      }
-    }
     pcl::PointCloud<pcl::PointXYZRGB> converted_sensor;
     pcl::transformPointCloud(sensor, converted_sensor, tmat);
     // map += converted_sensor;
