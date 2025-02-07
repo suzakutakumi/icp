@@ -25,6 +25,7 @@ public:
     this->declare_parameter("max_correspondence_distance", std::sqrt(std::numeric_limits<double>::max()));
     this->declare_parameter("transform_epsilon", 0.0);
     this->declare_parameter("euclidean_fitness_epsilon", 0.0);
+    this->declare_parameter("ref_prev_pose", false);
 
     result_publisher = this->create_publisher<publisher_type>("icp/result", 10);
     map_publisher = this->create_publisher<publisher_type>("icp/map", 10);
@@ -81,6 +82,13 @@ private:
     auto transform_epsilon = this->get_parameter("transform_epsilon").as_double();
     auto euclidean_fitness_epsilon = this->get_parameter("euclidean_fitness_epsilon").as_double();
 
+    static Eigen::Matrix4d global_transform = Eigen::Matrix4d::Identity();
+    if (not this->get_parameter("ref_prev_pose").as_bool())
+    {
+      global_transform = Eigen::Matrix4d::Identity();
+    }
+    pcl::transformPointCloud(sensor_xyz, sensor_xyz, global_transform);
+
     icp.setMaximumIterations(max_iteration);                       // 1回の呼び出しでの最大反復回数
     icp.setMaxCorrespondenceDistance(max_correspondence_distance); // 対応点の最大距離
     icp.setTransformationEpsilon(transform_epsilon);               // 収束条件：変換行列の変化量
@@ -105,7 +113,9 @@ private:
     result_msg.header.set__frame_id("nemui");
     result_publisher->publish(result_msg);
 
-    tmat = icp.getFinalTransformation().cast<double>();
+    global_transform = icp.getFinalTransformation() * global_transform;
+
+    tmat = global_transform.cast<double>();
     pcl::PointCloud<ICP_Type> sensor_;
     pcl::transformPointCloud(sensor_xyz, sensor_, tmat);
     sensor_xyz = sensor_;
